@@ -6,6 +6,7 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { EMBED_DIM } from "./config";
 import type { Article, ArticlesFile, EmbeddingsFile } from "@/types/schema";
 
 const dataDir = resolve(process.cwd(), "data");
@@ -55,12 +56,18 @@ export function getCorpus(): Promise<Corpus> {
       const articles = JSON.parse(await readFile(resolve(dataDir, af), "utf8")) as ArticlesFile;
       const embeddings = JSON.parse(await readFile(resolve(dataDir, ef), "utf8")) as EmbeddingsFile;
 
+      // 차원 검증 — 잘못된 차원의 코퍼스는 조용히 코사인을 망가뜨리므로 즉시 실패시킨다(리뷰2 #4).
+      if (embeddings.dim !== EMBED_DIM) {
+        throw new Error(`data_config_error: embeddings.dim=${embeddings.dim} != ${EMBED_DIM} (${ef})`);
+      }
+
       const byId = new Map(articles.articles.map((a) => [a.id, a]));
-      const vectors: CorpusVector[] = embeddings.items.map((it) => ({
-        id: it.id,
-        vec: it.v,
-        norm: Math.sqrt(it.v.reduce((s, x) => s + x * x, 0)),
-      }));
+      const vectors: CorpusVector[] = embeddings.items.map((it) => {
+        if (it.v.length !== EMBED_DIM) {
+          throw new Error(`data_config_error: ${it.id} 벡터 길이 ${it.v.length} != ${EMBED_DIM} (${ef})`);
+        }
+        return { id: it.id, vec: it.v, norm: Math.sqrt(it.v.reduce((s, x) => s + x * x, 0)) };
+      });
 
       return { articles, byId, vectors, usingMock: af.includes("mock"), embedModel: embeddings.model };
     })();

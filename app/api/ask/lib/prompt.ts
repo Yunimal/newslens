@@ -54,7 +54,8 @@ export function buildUserMessage(hits: Hit[], question: string): string {
  */
 export function extractSourceIds(answer: string, allowedIds: Set<string>): string[] {
   const out: string[] = [];
-  for (const m of answer.matchAll(/\[(a\d{4})\]/g)) {
+  // a + 4자리 이상(기사 수가 9999를 넘어도 대응). 어차피 allowedIds로 검증되므로 환각 위험 없음.
+  for (const m of answer.matchAll(/\[(a\d{4,})\]/g)) {
     const id = m[1];
     if (allowedIds.has(id) && !out.includes(id)) out.push(id);
   }
