@@ -197,6 +197,46 @@ data: {"type":"done"}                             // 항상 마지막
 임계치 게이트·검색 오류는 **스트리밍 시작 전**에 처리되므로 `no_result`/`429`/`500`은 정상 동작한다.
 기본(비스트리밍) JSON 계약은 그대로 유지 — 스트리밍은 순수 추가 기능.
 
+### 프론트(D) 연동 예시
+
+**JSON (간단):**
+```ts
+const res = await fetch("/api/ask", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ question, history, focus_article_id }),
+});
+if (!res.ok) { /* 429/500/400 → { error } */ const { error } = await res.json(); showRetry(error); return; }
+const { answer, source_ids, no_result } = await res.json();
+// source_ids로 articles.json에서 기사 조회해 근거 카드 렌더링
+```
+
+**스트리밍 (SSE):**
+```ts
+const res = await fetch("/api/ask?stream=1", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ question }),
+});
+const reader = res.body!.getReader();
+const dec = new TextDecoder();
+let buf = "", answer = "";
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buf += dec.decode(value, { stream: true });
+  for (const line of buf.split("\n\n")) {
+    if (!line.startsWith("data: ")) continue;
+    const ev = JSON.parse(line.slice(6));
+    if (ev.type === "token") { answer += ev.text; render(answer); }     // 타이핑 효과
+    else if (ev.type === "sources") renderSources(ev.source_ids);       // 근거 카드
+    else if (ev.type === "meta" && ev.no_result) markNoResult();
+    else if (ev.type === "error") showRetry(ev.error);
+  }
+  buf = buf.slice(buf.lastIndexOf("\n\n") + 2);
+}
+```
+
 ---
 
 ## 8. 팀 분담표 대비 진행 상황 (B)
