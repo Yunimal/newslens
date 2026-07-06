@@ -26,22 +26,58 @@ export const maxDuration = 60;
 const json = (body: AskResponse | { error: string }, status = 200) =>
   Response.json(body, { status });
 
-/** SSE 응답 빌더. producer가 emit로 이벤트를 흘리고, 오류는 error 이벤트로, 끝엔 done을 붙인다. */
-function sse(producer: (emit: (ev: SseEvent) => void) => Promise<void>): Response {
+/**
+ * SSE 응답 빌더. producer가 (emit, signal)로 이벤트를 흘린다. 클라이언트 이탈에 안전:
+ * emit은 닫힌 컨트롤러에서 no-op, cancel()·요청 abort 시 signal로 상위 생성을 중단(리뷰2 #2/#5/#13),
+ * 오류는 rate_limit을 구분해 error 이벤트로 알린다(#3). 정상 이탈은 서버 에러로 로깅하지 않는다.
+ */
+function sse(
+  reqSignal: AbortSignal | undefined,
+  producer: (emit: (ev: SseEvent) => void, signal: AbortSignal) => Promise<void>,
+): Response {
   const encoder = new TextEncoder();
+  const ac = new AbortController();
+  if (reqSignal) reqSignal.addEventListener("abort", () => ac.abort(), { once: true });
+  let closed = false;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const emit = (ev: SseEvent) => controller.enqueue(encoder.encode(encodeSse(ev)));
+      const emit = (ev: SseEvent) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(encodeSse(ev)));
+        } catch {
+          closed = true; // 컨트롤러가 이미 닫힘(클라이언트 이탈) → 이후 emit 무시
+        }
+      };
       try {
-        await producer(emit);
+        await producer(emit, ac.signal);
       } catch (e) {
-        // 스트리밍 시작 후에는 상태코드를 못 바꾸므로 error 이벤트로 알린다.
-        console.error("[/api/ask stream]", e);
-        emit({ type: "error", error: "일시적인 오류가 발생했습니다. 다시 시도해 주세요." });
+        // 클라이언트 이탈로 인한 abort는 정상 상황 → 로깅·error 이벤트 생략
+        if (!ac.signal.aborted && !closed) {
+          const rate = isRateLimit(e);
+          console.error("[/api/ask stream]", e);
+          emit({
+            type: "error",
+            code: rate ? "rate_limit" : "error",
+            error: rate
+              ? "요청이 많습니다. 잠시 후 다시 시도해 주세요."
+              : "일시적인 오류가 발생했습니다. 다시 시도해 주세요.",
+          });
+        }
       } finally {
         emit({ type: "done" });
-        controller.close();
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* 이미 닫힘 — no-op */
+        }
       }
+    },
+    cancel() {
+      closed = true;
+      ac.abort(); // 클라이언트가 스트림 취소 → 상위 OpenAI 생성 중단(비용/행 방지)
     },
   });
   return new Response(stream, {
@@ -53,18 +89,19 @@ function sse(producer: (emit: (ev: SseEvent) => void) => Promise<void>): Respons
   });
 }
 
-/** 클라이언트가 보낸 history를 신뢰하지 않고 정제: 역할 enum·길이·턴수 제한 */
+/** 클라이언트가 보낸 history를 신뢰하지 않고 정제: 역할 enum·길이·턴수 제한.
+ *  뒤에서부터 최대 MAX_HISTORY_TURNS개만 수집해 거대한 배열도 O(턴수)로 처리(리뷰2 #11). */
 function sanitizeHistory(h: unknown): ChatTurn[] {
   if (!Array.isArray(h)) return [];
-  return h
-    .filter(
-      (t): t is ChatTurn =>
-        !!t &&
-        (t.role === "user" || t.role === "assistant") &&
-        typeof t.content === "string",
-    )
-    .slice(-MAX_HISTORY_TURNS)
-    .map((t) => ({ role: t.role, content: t.content.slice(0, MAX_TURN_CHARS) }));
+  const out: ChatTurn[] = [];
+  for (let i = h.length - 1; i >= 0 && out.length < MAX_HISTORY_TURNS; i--) {
+    const t = h[i];
+    if (!t || (t.role !== "user" && t.role !== "assistant") || typeof t.content !== "string") continue;
+    const content = t.content.trim().slice(0, MAX_TURN_CHARS);
+    if (!content) continue; // 빈 발화 제외
+    out.push({ role: t.role, content });
+  }
+  return out.reverse();
 }
 
 function buildMessages(hits: Hit[], question: string, history: ChatTurn[]): ChatMessage[] {
@@ -102,7 +139,7 @@ export async function POST(req: Request) {
     // 2-a) 범위 밖
     if (noResult || hits.length === 0) {
       if (wantStream) {
-        return sse(async (emit) => {
+        return sse(req.signal, async (emit) => {
           emit({ type: "meta", no_result: true });
           emit({ type: "token", text: OUT_OF_SCOPE_NOTICE });
           emit({ type: "sources", source_ids: [] });
@@ -122,7 +159,7 @@ export async function POST(req: Request) {
       const ids = hits.map((h) => h.article.id);
       const answer = devModeAnswer(ids);
       if (wantStream) {
-        return sse(async (emit) => {
+        return sse(req.signal, async (emit) => {
           emit({ type: "meta", no_result: false });
           emit({ type: "token", text: answer });
           emit({ type: "sources", source_ids: ids });
@@ -136,10 +173,10 @@ export async function POST(req: Request) {
     const allowed = new Set(hits.map((h) => h.article.id));
 
     if (wantStream) {
-      return sse(async (emit) => {
+      return sse(req.signal, async (emit, signal) => {
         emit({ type: "meta", no_result: false });
         let full = "";
-        for await (const delta of chatStream(messages)) {
+        for await (const delta of chatStream(messages, signal)) {
           full += delta;
           emit({ type: "token", text: delta });
         }

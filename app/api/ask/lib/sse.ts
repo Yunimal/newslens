@@ -8,14 +8,14 @@
 //   { "type": "meta",    "no_result": false }   // 최초 1회. no_result면 이후 token은 안내문
 //   { "type": "token",   "text": "..." }         // 답변 델타(여러 번)
 //   { "type": "sources", "source_ids": ["a0001"] }// 인용된 근거 id (토큰 종료 후 1회)
-//   { "type": "error",   "error": "..." }         // 스트리밍 중 오류(상태코드는 이미 200 고정)
+//   { "type": "error", "code": "rate_limit"|"error", "error": "..." }  // 스트리밍 중 오류(상태코드 이미 200)
 //   { "type": "done" }                            // 종료 마커(항상 마지막)
 
 export type SseEvent =
   | { type: "meta"; no_result: boolean }
   | { type: "token"; text: string }
   | { type: "sources"; source_ids: string[] }
-  | { type: "error"; error: string }
+  | { type: "error"; code: "rate_limit" | "error"; error: string }
   | { type: "done" };
 
 export function encodeSse(ev: SseEvent): string {

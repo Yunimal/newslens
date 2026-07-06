@@ -36,6 +36,14 @@ function getClient(): OpenAI {
  */
 export async function embedQuery(text: string, corpusModel: string): Promise<number[]> {
   if (corpusModel === HASH_EMBED_MODEL) return hashEmbed(text);
+  // 실 임베딩 코퍼스라면 질의도 "정확히 같은 모델"로 임베딩해야 한다. 다른 모델이면 벡터 공간이
+  // 달라 조용히 오작동하므로 명확히 실패시킨다(리뷰2 #1). 해시 vs 실 구분만으론 부족.
+  if (corpusModel !== MODEL_EMBED) {
+    throw new Error(
+      `embed_config_error: 코퍼스 임베딩 모델(${corpusModel})이 질의 임베더(${MODEL_EMBED})와 다릅니다. ` +
+        `같은 모델로 코퍼스를 재생성하거나 질의 임베더를 맞추세요.`,
+    );
+  }
   if (!hasKey()) {
     throw new Error(
       `embed_config_error: 코퍼스(${corpusModel})는 실 임베딩인데 OPENAI_API_KEY가 없습니다. ` +
@@ -70,8 +78,15 @@ export async function chat(messages: ChatMessage[]): Promise<string> {
   return choice?.message?.content ?? "";
 }
 
-/** gpt-4o-mini 스트리밍 생성. 델타 텍스트를 순차 yield. (route가 SSE로 흘림) */
-export async function* chatStream(messages: ChatMessage[]): AsyncGenerator<string> {
+/**
+ * gpt-4o-mini 스트리밍 생성. 델타 텍스트를 순차 yield. (route가 SSE로 흘림)
+ * signal: 클라이언트 이탈 시 상위 OpenAI 생성을 중단(비용/행 방지, 리뷰2 #5).
+ * 모델 거부(refusal)는 throw해 비스트리밍 chat()과 동작을 맞춘다(리뷰2 #7/#9/#12).
+ */
+export async function* chatStream(
+  messages: ChatMessage[],
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
   const stream = await getClient().chat.completions.create(
     {
       model: MODEL_CHAT,
@@ -80,10 +95,12 @@ export async function* chatStream(messages: ChatMessage[]): AsyncGenerator<strin
       max_tokens: CHAT_MAX_TOKENS,
       stream: true,
     },
-    { timeout: CHAT_TIMEOUT_MS },
+    { timeout: CHAT_TIMEOUT_MS, signal },
   );
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content ?? "";
+    const choice = chunk.choices[0];
+    if (choice?.delta?.refusal) throw new Error(`model_refusal: ${choice.delta.refusal}`);
+    const delta = choice?.delta?.content ?? "";
     if (delta) yield delta;
   }
 }
