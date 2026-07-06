@@ -47,6 +47,12 @@ pipeline/cache/
 pipeline/raw/
 node_modules/
 
+# python (pipeline)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
 # local tooling
 .claude/
 .specstory/
