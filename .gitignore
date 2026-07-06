@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# NewsLens project
+.env*
+!.env.example
+pipeline/cache/
+pipeline/raw/
+node_modules/
+
+# local tooling
+.claude/
+.specstory/
