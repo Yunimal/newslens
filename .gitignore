@@ -50,3 +50,11 @@ node_modules/
 # local tooling
 .claude/
 .specstory/
+
+#캐시파일 제외
+__pycache__/
+*.pyc
+
+# 크롤링/수집된 raw 데이터 파일이나 폴더 제외
+*.raw
+/data/raw/
