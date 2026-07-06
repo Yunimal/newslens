@@ -71,19 +71,30 @@ def test_schemas() -> bool:
 
 
 # ── 2) frozen 스키마 기준 출력 검증 ────────────────────────────────────────────
+def _str_list(v, lo: int, hi: int) -> bool:
+    """v가 lo~hi개의 비어있지 않은 문자열 리스트인가 (non-list면 False → false-pass 방지)."""
+    return isinstance(v, list) and lo <= len(v) <= hi and all(isinstance(x, str) and x.strip() for x in v)
+
+
 def validate_enrich_output(d: dict) -> list[str]:
     errs = []
-    if not (isinstance(d.get("summary3"), list) and len(d["summary3"]) == 3):
-        errs.append("summary3 != 3문장")
-    if not (1 <= len(d.get("topic_tags", [])) <= 3):
-        errs.append("topic_tags 개수 1~3 아님")
+    if not _str_list(d.get("summary3"), 3, 3):
+        errs.append("summary3가 정확히 3개의 문자열이 아님")
+    if not _str_list(d.get("topic_tags"), 1, 3):
+        errs.append("topic_tags가 1~3개 문자열이 아님")
+    if not _str_list(d.get("keywords"), 3, 5):
+        errs.append("keywords가 3~5개 문자열이 아님")
     if d.get("sentiment") not in SENTIMENTS:
         errs.append(f"sentiment 잘못됨: {d.get('sentiment')}")
-    if not (3 <= len(d.get("keywords", [])) <= 5):
-        errs.append("keywords 개수 3~5 아님")
-    for ent in d.get("entities", []):
-        if ent.get("type") not in ENTITY_TYPES:
-            errs.append(f"entity type 잘못됨: {ent}")
+    ents = d.get("entities")
+    if not isinstance(ents, list):
+        errs.append("entities가 배열이 아님")
+    else:
+        for ent in ents:
+            if not isinstance(ent, dict) or not isinstance(ent.get("name"), str) or not ent.get("name", "").strip():
+                errs.append(f"entity name 누락/형식 오류: {ent}")
+            elif ent.get("type") not in ENTITY_TYPES:
+                errs.append(f"entity type 잘못됨: {ent}")
     return errs
 
 
