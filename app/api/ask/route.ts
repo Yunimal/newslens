@@ -150,12 +150,14 @@ export async function POST(req: Request) {
 
     // 2-b) 키 없음
     if (!hasKey()) {
-      // 프로덕션에서는 조용한 플레이스홀더 대신 명확히 실패(설정 누락을 시끄럽게)(리뷰 #12)
-      if (process.env.NODE_ENV === "production") {
+      // 기본적으로 production에서는 설정 누락을 시끄럽게 실패시킨다.
+      // 단, mock 데이터로 공개 데모/서빙을 해야 하는 경우 명시 플래그로 개발모드 답변을 허용한다.
+      const allowDevAnswer = process.env.NEWSLENS_ALLOW_DEV_ANSWER === "1";
+      if (process.env.NODE_ENV === "production" && !allowDevAnswer) {
         console.error("[/api/ask] OPENAI_API_KEY 미설정 (production)");
         return json({ error: "일시적인 오류가 발생했습니다. 다시 시도해 주세요." }, 500);
       }
-      // 개발 모드: 검색 결과만 반환 → 키 없이도 프론트 E2E(스트리밍 포함) 테스트 가능
+      // 개발/데모 모드: 검색 결과만 반환 → 키 없이도 프론트 E2E(스트리밍 포함) 테스트 가능
       const ids = hits.map((h) => h.article.id);
       const answer = devModeAnswer(ids);
       if (wantStream) {
