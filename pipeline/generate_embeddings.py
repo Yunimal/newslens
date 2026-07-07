@@ -19,18 +19,46 @@ OUTPUT_FILE = "pipeline/raw/embeddings_raw.json"
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 
+def hash32(s: str) -> int:
+    """FNV-1a 32-bit hash implementation matching JavaScript version"""
+    h = 2166136261
+    for char in s:
+        h = h ^ ord(char)
+        h = (h * 16777619) & 0xFFFFFFFF
+    return h
+
+def tokens(text: str) -> list:
+    """Tokenize text into words and character bigrams matching JS tokens()"""
+    import re
+    words = re.split(r'[^0-9a-zA-Z가-힣]+', text.lower())
+    words = [w for w in words if len(w) > 0]
+    
+    grams = list(words)
+    for w in words:
+        for i in range(len(w) - 1):
+            grams.append(w[i:i+2])
+    return grams
+
 def generate_mock_vector(text, dim=EMBEDDING_DIM):
-    """API 키가 없을 때를 대비한 결정론적(deterministic) 모형 임베딩 벡터 생성"""
-    # 텍스트 해시값을 시드로 사용하여 난수 생성기 초기화 (항상 동일한 텍스트에 동일한 벡터 반환)
-    seed = int(hashlib.sha256(text.encode('utf-8')).hexdigest(), 16) % (2**32)
-    rng = random.Random(seed)
-    # 임베딩 벡터 범위는 보통 -1.0 ~ 1.0 사이
-    vec = [round(rng.uniform(-0.5, 0.5), 6) for _ in range(dim)]
-    # L2 정규화 (유클리드 거리 및 코사인 유사도 연산을 위해 크기를 1로 맞춤)
-    norm = sum(x**2 for x in vec)**0.5
-    if norm > 0:
-        vec = [round(x / norm, 6) for x in vec]
-    return vec
+    """
+    JS의 hashEmbed (app/api/ask/lib/embed-core.ts)와 100% 동일한 Feature Hashing (Bag-of-Words) 임베딩 벡터 생성
+    """
+    v = [0.0] * dim
+    for tok in tokens(text):
+        h = hash32(tok)
+        idx = h % dim
+        
+        # 별도 salt 해시로 부호 결정
+        sign = 1 if (hash32("s#" + tok) & 1) else -1
+        v[idx] += sign
+        
+    import math
+    norm = math.hypot(*v)
+    if norm == 0.0:
+        norm = 1.0
+        
+    return [round(x / norm, 4) for x in v]
+
 
 def get_openai_embedding(text, api_key):
     """requests 모듈을 사용해 OpenAI Embedding API 직접 호출 (의존성 최소화)"""
@@ -99,7 +127,9 @@ def main():
             success_count += 1
         else:
             # API 키가 없거나 호출이 실패한 경우 Mock 벡터 생성
-            vector = generate_mock_vector(text_to_embed)
+            # 만약 use_mock이거나 전체가 mock이면 512차원(hash-fallback-v1 스펙)으로 생성, 그 외 실패 케이스 백업은 1536차원으로 생성
+            target_dim = 512 if use_mock else EMBEDDING_DIM
+            vector = generate_mock_vector(text_to_embed, dim=target_dim)
             mock_count += 1
             
         embedding_items.append({
@@ -111,9 +141,12 @@ def main():
             print(f"   -> 진행 상황: {idx}/{len(articles)} 기사 처리 완료...")
 
     # 최종 결과 저장
+    actual_model = "hash-fallback-v1" if use_mock or mock_count == len(articles) else EMBEDDING_MODEL
+    actual_dim = 512 if actual_model == "hash-fallback-v1" else EMBEDDING_DIM
+
     output_data = {
-        "model": "hash-fallback-v1" if use_mock or mock_count == len(articles) else EMBEDDING_MODEL,
-        "dim": EMBEDDING_DIM,
+        "model": actual_model,
+        "dim": actual_dim,
         "items": embedding_items
     }
 
@@ -125,7 +158,7 @@ def main():
     print(f"결과 파일: '{OUTPUT_FILE}'")
     print(f"실제 OpenAI API 임베딩 수집: {success_count}건")
     print(f"Mock 임베딩 생성: {mock_count}건")
-    print(f"총 임베딩 개수: {len(embedding_items)}건 (차원 수: {EMBEDDING_DIM})")
+    print(f"총 임베딩 개수: {len(embedding_items)}건 (차원 수: {actual_dim})")
 
 if __name__ == "__main__":
     main()

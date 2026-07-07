@@ -68,7 +68,8 @@ def main():
 
     try:
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, ensure_ascii=False, indent=2)
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+            
         print(f"🚀 [성공] embeddings.json 파일이 '{OUTPUT_FILE}' 위치로 정상 처리되었습니다.")
         print(f"   - 총 매핑 성공 기사 수: {len(exported_items)}건")
         if skipped_count > 0:
