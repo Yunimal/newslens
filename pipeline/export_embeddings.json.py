@@ -67,8 +67,33 @@ def main():
     }
 
     try:
+        # Custom JSON formatting to print vector 'v' on a single line
+        # This keeps the file extremely compact (~1800 lines instead of 230,000+ lines)
+        parts = []
+        parts.append('{')
+        parts.append(f'  "model": "{model_name}",')
+        parts.append('  "dim": 512,')
+        parts.append('  "items": [')
+        
+        item_strings = []
+        for item in exported_items:
+            v_str = json.dumps(item["v"])
+            item_str = (
+                f'    {{\n'
+                f'      "id": "{item["id"]}",\n'
+                f'      "v": {v_str}\n'
+                f'    }}'
+            )
+            item_strings.append(item_str)
+            
+        parts.append(",\n".join(item_strings))
+        parts.append('  ]')
+        parts.append('}')
+        
+        json_content = "\n".join(parts)
+        
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
+            f.write(json_content)
             
         print(f"🚀 [성공] embeddings.json 파일이 '{OUTPUT_FILE}' 위치로 정상 처리되었습니다.")
         print(f"   - 총 매핑 성공 기사 수: {len(exported_items)}건")
