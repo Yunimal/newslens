@@ -47,12 +47,6 @@ pipeline/cache/
 pipeline/raw/
 node_modules/
 
-# python (pipeline)
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-
 # local tooling
 .claude/
 .specstory/
@@ -64,3 +58,6 @@ __pycache__/
 # 크롤링/수집된 raw 데이터 파일이나 폴더 제외
 *.raw
 /data/raw/
+
+# 가상환경 폴더 제외
+NLP_project/
