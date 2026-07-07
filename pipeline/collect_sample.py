@@ -24,31 +24,39 @@ def clean_text(text):
     caption_pattern = r'\[[^\]]*?(?:제공|금지|자료사진|재판매|DB)[^\]]*?\]'
     text = re.sub(caption_pattern, '', text)
     
-    # 2. 이메일 주소 제거
+    # 2. 기자명 + 이메일 주소 결합형 제거 (예: 고휘훈(take5@yna.co.kr))
+    reporter_email_pattern = r'\w+\([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\)'
+    text = re.sub(reporter_email_pattern, '', text)
+    
+    # 3. 이메일 주소 단독 제거
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     text = re.sub(email_pattern, '', text)
     
-    # 3. 저작권 관련 고정 문구 제거
+    # 4. 저작권 관련 고정 문구 제거
     copyright_pattern = r'<저작권자\(c\)\s*연합뉴스,\s*무단\s*전재-재배포,\s*AI\s*학습\s*및\s*활용\s*금지>'
     text = re.sub(copyright_pattern, '', text)
     
-    # 4. 제보 및 채널 안내 제거
+    # 5. 연합뉴스TV 전용 제보 안내 제거
+    ytv_report_pattern = r'(?:연합뉴스TV\s+)?기사문의\s*및\s*제보\s*:\s*카톡/라인\s*\w*'
+    text = re.sub(ytv_report_pattern, '', text)
+    
+    # 6. 일반 제보 및 채널 안내 제거
     report_pattern = r'제보는\s+카카오톡\s+\w+'
     text = re.sub(report_pattern, '', text)
     
-    # 5. 송고 시간 관련 문구 제거
+    # 7. 송고 시간 관련 문구 제거
     songgo_pattern = r'\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}\s+송고'
     text = re.sub(songgo_pattern, '', text)
     songgo_pattern_ko = r'\d{4}년\s*\d{2}월\s*\d{2}일\s*\d{2}시\s*\d{2}분\s*송고'
     text = re.sub(songgo_pattern_ko, '', text)
     
-    # 6. 관련 뉴스 블록 제거
+    # 8. 관련 뉴스 블록 제거
     text = re.sub(r'관련 뉴스\s+.*?(?:\n|$)', '', text, flags=re.DOTALL)
     
-    # 7. 해시태그 제거
+    # 9. 해시태그 제거
     text = re.sub(r'#\w+', '', text)
     
-    # 8. 마케팅성 하단 배너 및 문구 제거
+    # 10. 마케팅성 하단 배너 및 문구 제거
     boilerplates = [
         r'국내\s*최대\s*원스톱\s*콘텐츠\s*제공\s*플랫폼',
         r'함께\s*보면\s*좋은\s*콘텐츠\s*by\s*데이블',
@@ -56,18 +64,19 @@ def clean_text(text):
         r'공유하기\s*URL이\s*복사되었습니다\.?',
         r'본문\s*글자\s*크기\s*조정',
         r'제보\s*$',
-        r'광고\s*'
+        r'광고\s*',
+        r'인공지능이\s*자동으로\s*줄인\s*\'세\s*줄\s*요약\'\s*기술을\s*사용합니다\.전체\s*내용을\s*이해하기\s*위해서는\s*기사\s*본문과\s*함께\s*읽어야\s*합니다\.?'
     ]
     for bp in boilerplates:
         text = re.sub(bp, '', text, flags=re.IGNORECASE)
         
-    # 9. 연속된 공백 및 줄바꿈 정리
+    # 11. 연속된 공백 및 줄바꿈 정리
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def get_article_links(pages=20):
     """
-    최신 뉴스 목록 페이지들을 돌며 기사 상세 URL을 추출 및 중복 제거
+    최신 뉴스 목록 페이지들을 돌며 기사 상세 URL을 추출 및 중복 제거 (연합뉴스 yna.co.kr 전용)
     """
     links = []
     print(f"=== 1단계: 최신 기사 URL 목록 수집 시작 (총 {pages}페이지) ===")
@@ -90,7 +99,7 @@ def get_article_links(pages=20):
             
             for a in soup.find_all("a", href=True):
                 href = a["href"]
-                # 상세 기사 링크(/view/) 필터링
+                # 상세 기사 링크 (/view/) 필터링
                 if "/view/" in href:
                     # 절대 경로 결합
                     if href.startswith("//"):
@@ -119,17 +128,16 @@ def get_article_links(pages=20):
     return links
 
 def extract_article_id(url):
-    """URL에서 연합뉴스 고유 기사 ID 추출"""
+    """URL에서 기사 고유 ID 추출"""
     parts = url.split("/")
     last_part = parts[-1].split("?")[0]
     if last_part:
         return last_part
-    # 매칭 실패 시 SHA256 해시값 반환
     return hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]
 
 def scrape_article_detail(url):
     """
-    개별 기사 URL에서 제목, 발행일, 정제된 본문 텍스트를 추출
+    연합뉴스 개별 기사 URL에서 제목, 발행일, 카테고리, 정제된 본문 텍스트를 추출
     """
     headers = {'User-Agent': random.choice(USER_AGENTS)}
     resp = requests.get(url, headers=headers, timeout=10)
@@ -142,7 +150,12 @@ def scrape_article_detail(url):
     
     # 1. 제목 추출
     title = ""
-    title_el = soup.find('h1') or soup.select_one('h1.tit01') or soup.select_one('h1.tit-article') or soup.select_one('h1.title-article')
+    title_el = (
+        soup.find('h1') or 
+        soup.select_one('h1.tit01') or 
+        soup.select_one('h1.tit-article') or 
+        soup.select_one('h1.title-article')
+    )
     if title_el:
         title = title_el.get_text(strip=True)
     else:
@@ -153,6 +166,8 @@ def scrape_article_detail(url):
     # 연합뉴스 타이틀 접미사 제거
     if title.endswith(" | 연합뉴스"):
         title = title[:-8]
+    elif title.endswith(" | 연합뉴스TV"):
+        title = title[:-10]
         
     # 2. 발행일 추출
     published_at = ""
@@ -164,14 +179,27 @@ def scrape_article_detail(url):
         if time_el:
             published_at = time_el.get_text(strip=True)
             
-    # 3. 본문 추출 및 노이즈 제거
+    # 3. 카테고리 추출
+    category = ""
+    category_meta = soup.find("meta", property="article:section") or soup.find("meta", itemprop="genre")
+    if category_meta:
+        category = category_meta.get("content", "").strip()
+            
+    # 4. 본문 추출 및 노이즈 제거
     content = ""
-    content_div = soup.select_one('div.article-body') or soup.select_one('article') or soup.select_one('.story-news')
+    content_div = (
+        soup.select_one('div.article-body') or 
+        soup.select_one('article') or 
+        soup.select_one('.story-news')
+    )
     if content_div:
-        # 원본 유지 보존을 위해 깊은 복사 사용
+        # 원본 보호를 위해 복사본 사용
         content_copy = copy.copy(content_div)
+        
         # 본문 영역 내부의 불필요한 태그 제거 (스크립트, 스타일, 아이프레임, 이미지 설명 캡션 등)
-        for s in content_copy(['script', 'style', 'iframe', 'button', 'figcaption', 'ins', 'figure', 'span.img-desc']):
+        for s in content_copy([
+            'script', 'style', 'iframe', 'button', 'figcaption', 'ins', 'figure', 'span.img-desc'
+        ]):
             s.decompose()
         content = content_copy.get_text()
     else:
@@ -181,19 +209,20 @@ def scrape_article_detail(url):
     
     return {
         "title": title,
-        "publishedAt": published_at,
+        "published_at": published_at,
+        "category": category,
         "content": cleaned_content
     }
 
-def collect_500_articles(target_count=500):
+def collect_articles(target_count=660):
     """
-    500개 기사 수집 파이프라인 메인 실행 제어기
+    기사 수집 파이프라인 메인 실행 제어기 (연합뉴스 yna.co.kr 기준)
     """
     # 저장 디렉토리 생성
     os.makedirs('pipeline/cache', exist_ok=True)
     os.makedirs('pipeline/raw', exist_ok=True)
     
-    # 1단계: URL 목록 수집
+    # 1단계: URL 목록 수집 (20페이지)
     urls = get_article_links(pages=20)
     
     # 목표 수량으로 자르기
@@ -219,11 +248,22 @@ def collect_500_articles(target_count=500):
         try:
             detail = scrape_article_detail(url)
             
+            # 날짜 포맷 표준화 (YYYY-MM-DD)
+            pub_date = detail["published_at"]
+            if pub_date:
+                date_match = re.search(r'(\d{4})[-./](\d{2})[-./](\d{2})', pub_date)
+                if date_match:
+                    pub_date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+                else:
+                    pub_date = pub_date[:10]
+            
             article_obj = {
                 "id": article_id,
                 "title": detail["title"],
                 "url": url,
-                "publishedAt": detail["publishedAt"],
+                "press": "연합뉴스",
+                "published_at": pub_date,
+                "category": detail["category"],
                 "content": detail["content"]
             }
             
@@ -259,4 +299,4 @@ def collect_500_articles(target_count=500):
     print(f"\n=== 최종 수집 완료: 총 {len(merged_articles)}건의 정제된 기사를 '{output_path}'에 저장했습니다. ===")
 
 if __name__ == "__main__":
-    collect_500_articles()
+    collect_articles()
