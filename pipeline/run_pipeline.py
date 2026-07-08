@@ -15,9 +15,8 @@ PIPELINE_STEPS = [
     "pipeline/enrich_articles.py",       # 2단계: LLM 뉴스 분석 (요약/엔티티)
     "pipeline/generate_embeddings.py",   # 3단계: 임베딩 추출
     "pipeline/reduce_dimensions.py",    # 4단계: UMAP 차원 축소
-    "pipeline/export_articles.json.py",  # 5단계: articles.json 빌드
-    "pipeline/export_embeddings.json.py", # 6단계: embeddings.json 빌드
-    "pipeline/create_graph.py"          # 7단계: 관계망 graph.json 빌드 및 클린업
+    "pipeline/05_export.py",             # 5단계: 통합 데이터 배포 (articles/embeddings)
+    "pipeline/create_graph.py"          # 6단계: 관계망 graph.json 빌드 및 클린업
 ]
 
 def main():

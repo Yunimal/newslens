@@ -1,12 +1,12 @@
 # Python 데이터 파이프라인 (`pipeline/`)
 
-이 폴더는 뉴스를 수집하고, 임베딩 벡터를 추출 및 차원 축소하여 동결된 데이터 명세에 맞게 변환하는 Python 데이터 파이프라인 모듈로 구성되어 있습니다.
+이 폴더는 뉴스를 수집하고, 분석 정제 후 임베딩 추출, 차원 축소, 최종 스키마 검증 및 내보내기를 담당하는 Python 데이터 파이프라인 모듈로 구성되어 있습니다.
 
 ---
 
 ## 🚀 연쇄 자동 실행 가이드 (통합 러너)
 
-5단계의 전체 파이프라인을 일일이 따로 구동할 필요 없이, 아래 통합 실행 스크립트 단 **하나만** 구동하면 수집부터 빌드까지 연쇄적으로 자동 실행됩니다.
+6단계의 전체 파이프라인 단계를 일일이 따로 구동할 필요 없이, 아래 통합 실행 스크립트 단 **하나만** 구동하면 수집부터 정합성 검증 및 배포본 생성까지 연쇄적으로 자동 실행됩니다.
 
 ```bash
 # 가상환경 구동 후 통합 실행
@@ -21,32 +21,37 @@ python pipeline/run_pipeline.py
 
 ```bash
 # 가상환경 구동 후 패키지 설치
-pip install -r requirements.txt
+pip install -r pipeline/requirements.txt
 ```
 
 ### 1단계: 뉴스 데이터 수집 (`collect_sample.py`)
-- 매체 소스로부터 기사 데이터를 크롤링하고 한글 형태소 필터링을 통해 1차 전처리 데이터를 생성합니다.
+- RSS 소스로부터 기사 데이터를 크롤링하고 한글 형태소 필터링을 통해 1차 전처리 데이터를 생성합니다.
 - **출력 파일**: `pipeline/raw/raw_articles_500.json`
 
-### 2단계: 고차원 임베딩 추출 (`generate_embeddings.py`)
-- 기사의 제목과 본문을 통합하여 OpenAI 임베딩 벡터를 추출합니다.
-- **💡 중요 (API 키 연동 및 자동 전환 로직)**:
-  - **API 키가 없을 때 (기본값)**: `.env` 파일에 `OPENAI_API_KEY`가 없으면 기사 텍스트 해시값을 활용해 동일한 기사에는 항상 일관된 벡터가 부여되도록 설계된 결정론적 **Mock 임베딩 시스템**(`hash-fallback-v1`)이 실행됩니다. API 호출 비용 없이 파이프라인 테스트를 진행할 수 있습니다.
-  - **API 키 등록 시 (자동 전환)**: 루트의 `.env` 파일에 `OPENAI_API_KEY`를 입력하고 스크립트를 재실행하면, 코드 수정 없이 **자동으로 OpenAI Embedding API(`text-embedding-3-small`)를 직접 호출**하여 실제 고정밀 시맨틱 벡터를 수집합니다.
-- **출력 파일**: `pipeline/raw/embeddings_raw.json` (1536차원 오리지널 벡터)
+### 2단계: LLM 뉴스 분석 및 정보 보강 (`enrich_articles.py`)
+- **💡 중요 (API 키 연동 및 동적 오프라인 전환 로직)**:
+  - **API 키가 없을 때 (오프라인 모드)**: `.env` 파일에 `OPENAI_API_KEY`가 없으면 LLM 호출 비용 방지 및 원활한 로컬 드라이런을 위해 API 호출을 안전하게 건너뛰며, 스키마 정합성을 만족하도록 모든 기사에 `entities: []`를 부여합니다.
+  - **API 키 등록 시 (OpenAI API 연동)**: `.env`에 `OPENAI_API_KEY`가 감지되면 자동으로 OpenAI Chat Completion API(`gpt-4o-mini` 모델 및 structured json output 적용)를 호출하여 고품질의 3문장 요약(`summary3`), 주제 태그(`topic_tags`), 감성/논조(`sentiment`), 핵심 키워드(`keywords`) 및 엔티티(`entities: PER/ORG/LOC`)를 보강합니다.
+- **출력 파일**: `pipeline/raw/raw_articles_500.json` (동적 보강 적용)
 
-### 3단계: 2D 투영 차원 축소 (`reduce_dimensions.py`)
-- 고차원(1536차원) 임베딩 벡터를 2차원 시각화 평면에 뿌릴 수 있도록 UMAP(Uniform Manifold Approximation and Projection) 알고리즘을 사용해 `(x, y)` 평면 좌표로 투영시킵니다.
-- `umap-learn` 라이브러리가 없을 경우 PCA(주성분 분석) -> 파이썬 수학식 순으로 자동 폴백 설계가 적용되어 있습니다.
+### 3단계: 고차원 임베딩 추출 (`generate_embeddings.py`)
+- 기사의 제목과 본문을 통합하여 OpenAI 임베딩 벡터를 추출합니다.
+- API 키가 없을 때는 결정론적 **Mock 임베딩 시스템**(`hash-fallback-v1`)이 자동 구동되어 512차원 벡터를 부여하고, API 키가 있으면 실제 **OpenAI Embedding API**(`text-embedding-3-small`)를 호출하여 시맨틱 벡터를 수집합니다.
+- **출력 파일**: `pipeline/raw/embeddings_raw.json`
+
+### 4단계: 2D 투영 차원 축소 (`reduce_dimensions.py`)
+- 고차원 임베딩 벡터를 2차원 시각화 평면에 뿌릴 수 있도록 UMAP(Uniform Manifold Approximation and Projection) 알고리즘을 사용해 `(x, y)` 평면 좌표로 투영시킵니다.
 - **출력 파일**: `pipeline/raw/articles_with_coords.json`
 
-### 4단계: 클라이언트 데이터 빌드 (`export_articles.json.py`)
-- 차원 축소된 좌표를 바탕으로 **KMeans 알고리즘**을 돌려 6개의 이슈 군집(`cluster_id: 0~5`)을 자동 분류합니다.
-- 동결 스키마 정합성을 검증하며 `published_at` 스네이크 케이스 롤백, 3문장 요약(`summary3`), 키워드 트렌드(**`trends[]` 시계열 집계 상위 20개**) 데이터를 최종 빌드합니다.
-- 누적식 매핑 데이터베이스(`pipeline/raw/id_mappings.json`)를 통해, 데이터 추가 수집 시에도 기존에 매핑된 기사 ID(`a0001`~`aXXXX`)는 절대 변하지 않고 영구 보존됩니다.
-- **출력 파일**: `data/articles.json`
+### 5단계: 통합 데이터 배포 및 Pydantic 검증 (`05_export.py`)
+- 기존의 개별 기사 배포 스크립트와 임베딩 배포 스크립트를 통합한 최종 배포본 빌더입니다.
+- **KMeans 알고리즘**을 돌려 6개의 이슈 군집(`cluster_id: 0~5`)을 자동 분류하고, 실제 개별 기사의 감성 정보를 집계하여 군집별 감성 분포(`sentiment_dist`) 정합성을 올바르게 계산합니다.
+- **다단계 Pydantic 검증 게이트**:
+  1. 기사 조립 루프 내에서 개별 `ArticleModel` 및 `EmbeddingItemModel`로 유효성을 검사하여 규격 미달인 기사 데이터를 안전하게 필터링(제외)합니다.
+  2. 최종 덤프 전 `ArticlesFileModel` 및 `EmbeddingsFileModel`을 사용하여 데이터 전체의 완벽한 정합성을 보장한 후 배포합니다.
+- **출력 파일**: `data/articles.json`, `data/embeddings.json`
 
-### 5단계: 서버 전용 임베딩 파일 가공 (`export_embeddings.json.py`)
-- 원본 `embeddings_raw.json`을 명세 규격에 맞춰 가공합니다.
-- 백엔드 RAG 및 서버 인덱싱 전용으로 사용하기 위해 기사 ID를 `"aXXXX"` 형식으로 매핑하고, 1536차원 벡터를 **512차원으로 슬라이싱** 및 **소수점 4자리 반올림** 가공합니다.
-- **출력 파일**: `data/embeddings.json` (⚠️ 서버 전용, 클라이언트 배포 금지)
+### 6단계: 관계망 데이터 생성 및 클린업 (`create_graph.py`)
+- 최종 `data/articles.json`을 읽어 빈도 상위 60개 엔티티 노드와 동시 출현 2회 이상(`weight >= 2`)의 엣지 관계망을 빌드합니다.
+- 불필요한 중복을 방지하기 위해 엣지의 노드 연결 관계를 사전순 정렬(`source < target`)하여 저장하며, 레거시 레이아웃 데이터인 `data/coords.json`이 존재할 경우 자동으로 감지하여 청소(삭제)합니다.
+- **출력 파일**: `data/graph.json`
