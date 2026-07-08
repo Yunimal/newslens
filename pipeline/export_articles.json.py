@@ -161,7 +161,11 @@ def main():
                     f"대표 기사로 '{representative_title}' 등이 보도되었습니다."
                 )
                 
-            sentiment_dist = {"pos": 0, "neu": c_size, "neg": 0}
+            sentiment_dist = {
+                "pos": sum(1 for art in c_articles if art.get("sentiment", "neu") == "pos"),
+                "neu": sum(1 for art in c_articles if art.get("sentiment", "neu") == "neu"),
+                "neg": sum(1 for art in c_articles if art.get("sentiment", "neu") == "neg")
+            }
         else:
             avg_x, avg_y = 0.0, 0.0
             label = f"군집 {c_id}"
