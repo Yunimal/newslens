@@ -15,7 +15,6 @@ INPUT_FILE = "pipeline/raw/articles_with_coords.json"
 MAPPING_FILE = "pipeline/raw/id_mappings.json"
 OUTPUT_DIR = "data"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "articles.json")
-COORDS_FILE = os.path.join(OUTPUT_DIR, "coords.json")
 
 def clean_sentence(s):
     # 문장 끝에 마침표 보장
@@ -303,21 +302,6 @@ def main():
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
             json.dump(final_output, f, ensure_ascii=False, indent=2)
         print(f"🚀 [성공] articles.json 파일이 '{OUTPUT_FILE}' 위치로 정상 처리되었습니다.")
-        
-        # 7.5. coords.json 파일 개별 생성 (ID 정렬)
-        coords_output = [
-            {
-                "articleId": art["id"],
-                "x": art["x"],
-                "y": art["y"]
-            }
-            for art in mapped_articles
-        ]
-        coords_output.sort(key=lambda x: x["articleId"])
-        
-        with open(COORDS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(coords_output, f, ensure_ascii=False, indent=2)
-        print(f"🚀 [성공] coords.json 파일이 '{COORDS_FILE}' 위치로 정상 처리되었습니다.")
     except Exception as e:
         print(f"Error: 파일 저장 중 에러가 발생했습니다: {e}")
 
