@@ -207,15 +207,21 @@ curl -sN -X POST "localhost:3000/api/ask?stream=1" \
 `Content-Type: text/event-stream`. 각 이벤트는 `data: <json>\n\n` 한 줄, JSON의 `type`으로 구분(D는 `type`별 처리):
 
 ```
-data: {"type":"meta","no_result":false}            // 1단 게이트(검색) 결과
+data: {"type":"meta","no_result":false}            // ① 잠정 판정 (1단 게이트=코사인 검색)
 data: {"type":"token","text":"반도체 수출이…"}      // 답변 델타(여러 번)
-data: {"type":"sources","source_ids":["a0013"],"no_result":false}   // 최종 판정(2단 게이트)
+data: {"type":"sources","source_ids":["a0013"]}    // 인용된 근거 id
+data: {"type":"meta","no_result":false}            // ② 최종 판정 (2단 게이트=인용 여부)
 data: {"type":"done"}                              // 항상 마지막
 // 스트리밍 중 오류: {"type":"error","code":"rate_limit"|"error","error":"…"} 후 done (상태코드 200 고정)
 ```
 
-⚠️ **`sources` 이벤트가 최종 판정**이다. `no_result:true`면 LLM이 근거를 인용하지 못한 것이므로
-프론트는 **스트리밍된 본문을 버리고 "관련 기사 없음" 안내문을 표시**해야 한다.
+⚠️ **`meta`는 2번 오고, 마지막 `meta`가 최종 판정**이다.
+스트리밍은 첫 토큰이 나가기 전에 최종 판정을 알 수 없으므로(인용은 생성 중에 나온다),
+① 시작 시 잠정 판정 → ② 종료 시 최종 판정 순으로 보낸다.
+최종 `no_result:true`면 프론트는 **스트리밍된 본문을 버리고 "관련 기사 없음" 안내문**을 표시한다.
+
+> 관심사 분리: **`meta` = 판정**, **`sources` = 인용 목록**.
+> 클라이언트는 meta를 받을 때마다 판정을 갱신(덮어쓰기)하면 된다.
 
 임계치 게이트·검색 오류는 **스트리밍 시작 전**에 처리되므로 `no_result`/`429`/`500`은 정상 동작한다.
 기본(비스트리밍) JSON 계약은 그대로 유지 — 스트리밍은 순수 추가 기능.

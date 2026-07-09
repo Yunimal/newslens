@@ -142,7 +142,8 @@ export async function POST(req: Request) {
         return sse(req.signal, async (emit) => {
           emit({ type: "meta", no_result: true });
           emit({ type: "token", text: OUT_OF_SCOPE_NOTICE });
-          emit({ type: "sources", source_ids: [], no_result: true });
+          emit({ type: "sources", source_ids: [] });
+          emit({ type: "meta", no_result: true }); // 최종 판정(마지막 meta)
         });
       }
       return json({ answer: OUT_OF_SCOPE_NOTICE, source_ids: [], no_result: true });
@@ -164,7 +165,8 @@ export async function POST(req: Request) {
         return sse(req.signal, async (emit) => {
           emit({ type: "meta", no_result: false });
           emit({ type: "token", text: answer });
-          emit({ type: "sources", source_ids: ids, no_result: false });
+          emit({ type: "sources", source_ids: ids });
+          emit({ type: "meta", no_result: false }); // 최종 판정(마지막 meta)
         });
       }
       return json({ answer, source_ids: ids, no_result: false });
@@ -184,9 +186,10 @@ export async function POST(req: Request) {
         }
         // 전문 버퍼로 인용 추출 → 컨텍스트에 넣은 id만(환각 제거)
         const ids = extractSourceIds(full, allowed);
+        emit({ type: "sources", source_ids: ids });
         // 2단 게이트: 근거를 하나도 인용 못했으면 최종 판정은 no_result.
-        // (토큰은 이미 나갔으므로 프론트가 본문을 버리고 안내문을 띄운다 — lib/sse.ts 참고)
-        emit({ type: "sources", source_ids: ids, no_result: ids.length === 0 });
+        // 토큰은 이미 나갔으므로 프론트가 마지막 meta를 보고 본문을 버리고 안내문을 띄운다.
+        emit({ type: "meta", no_result: ids.length === 0 });
       });
     }
 
