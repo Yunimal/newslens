@@ -17,10 +17,16 @@ export const HASH_EMBED_MODEL = "hash-fallback-v1";
 /** 검색(retrieval) */
 export const TOP_K = 6; // 컨텍스트로 넘길 최대 근거 기사 수
 
-// 실 임베딩(text-embedding-3-small) 경로 임계치. A의 실데이터+실키 도착 후
-// in/out-of-corpus fixture로 재튜닝(블루프린트 §2 방식).
-export const TAU_MIN = 0.3; // 최고 유사도가 이 값 미만이면 no_result (챗 호출 스킵)
-export const TAU_CTX = 0.2; // 컨텍스트 포함 최소 유사도 (약한 꼬리 제거). TAU_MIN > TAU_CTX 유지
+// 실 임베딩(text-embedding-3-small) 경로 임계치.
+// ── 2026-07-08 실데이터(369건) + fixture 10/10 캘리브레이션 결과 (npm run calibrate) ──
+//   in-corpus : min 0.3847, mean 0.4305
+//   out-corpus: max 0.3872, mean 0.3367   → 분리 마진 -0.0025 (겹침!)
+// 종합 뉴스 코퍼스는 어떤 질문이든 기저 유사도가 높아 "단일 코사인 임계치로 범위밖 판별 불가".
+// 그래서 2단 게이트를 쓴다:
+//   1단(여기): TAU_MIN=0.36 — in-corpus는 전부 통과시키면서 명백한 junk 60%를 챗 호출 0회로 차단
+//   2단(route): LLM이 근거를 하나도 인용하지 못하면 no_result 로 판정 (의미 기반 최종 게이트)
+export const TAU_MIN = 0.36; // 1단 게이트: 이 값 미만이면 즉시 no_result (챗 스킵)
+export const TAU_CTX = 0.3; // 컨텍스트 포함 최소 유사도 (약한 꼬리 제거). TAU_MIN > TAU_CTX 유지
 
 // 해시 폴백 임베더(키 없음, 개발/오프라인)용 임계치 — 절대 코사인 스케일이 낮아 별도 값.
 export const TAU_MIN_HASH = 0.15;

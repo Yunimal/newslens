@@ -142,7 +142,7 @@ export async function POST(req: Request) {
         return sse(req.signal, async (emit) => {
           emit({ type: "meta", no_result: true });
           emit({ type: "token", text: OUT_OF_SCOPE_NOTICE });
-          emit({ type: "sources", source_ids: [] });
+          emit({ type: "sources", source_ids: [], no_result: true });
         });
       }
       return json({ answer: OUT_OF_SCOPE_NOTICE, source_ids: [], no_result: true });
@@ -164,7 +164,7 @@ export async function POST(req: Request) {
         return sse(req.signal, async (emit) => {
           emit({ type: "meta", no_result: false });
           emit({ type: "token", text: answer });
-          emit({ type: "sources", source_ids: ids });
+          emit({ type: "sources", source_ids: ids, no_result: false });
         });
       }
       return json({ answer, source_ids: ids, no_result: false });
@@ -183,12 +183,20 @@ export async function POST(req: Request) {
           emit({ type: "token", text: delta });
         }
         // 전문 버퍼로 인용 추출 → 컨텍스트에 넣은 id만(환각 제거)
-        emit({ type: "sources", source_ids: extractSourceIds(full, allowed) });
+        const ids = extractSourceIds(full, allowed);
+        // 2단 게이트: 근거를 하나도 인용 못했으면 최종 판정은 no_result.
+        // (토큰은 이미 나갔으므로 프론트가 본문을 버리고 안내문을 띄운다 — lib/sse.ts 참고)
+        emit({ type: "sources", source_ids: ids, no_result: ids.length === 0 });
       });
     }
 
     const answer = await chat(messages);
     const source_ids = extractSourceIds(answer, allowed);
+    // 2단 게이트(의미 기반): 코사인 1단을 통과했어도 LLM이 근거를 하나도 인용하지 못했다면
+    // 실제로는 "관련 기사 없음"이다. 인용 없는 답변은 검증 불가하므로 내보내지 않는다.
+    if (source_ids.length === 0) {
+      return json({ answer: OUT_OF_SCOPE_NOTICE, source_ids: [], no_result: true });
+    }
     return json({ answer, source_ids, no_result: false });
   } catch (e) {
     // 스트리밍 시작 전(검색 등)의 오류만 여기로 온다. 스트리밍 중 오류는 sse() 내부에서 처리.
