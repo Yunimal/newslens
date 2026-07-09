@@ -90,17 +90,34 @@ pipeline/prompts/               A에게 넘기는 배치 분석 프롬프트+스
 
 ---
 
-## 4. 검색 임계치 (threshold)
+## 4. 범위 밖(no_result) 판정 — **2단 게이트**
 
 | 상수 | 실 임베딩 | 해시 폴백 | 뜻 |
 | --- | --- | --- | --- |
-| `TAU_MIN` | 0.30 | 0.15 | 최고 유사도가 이 값 미만이면 `no_result`(챗 스킵) |
-| `TAU_CTX` | 0.20 | 0.10 | 컨텍스트에 넣을 최소 유사도(약한 꼬리 제거) |
+| `TAU_MIN` | **0.36** | 0.15 | 1단: 최고 유사도가 이 값 미만이면 즉시 `no_result`(챗 스킵) |
+| `TAU_CTX` | **0.30** | 0.10 | 컨텍스트에 넣을 최소 유사도(약한 꼬리 제거) |
 | `TOP_K` | 6 | 6 | 컨텍스트로 넘길 최대 근거 기사 수 |
 
-두 임베더는 코사인 절대 스케일이 달라 임계치를 분리했다(`retrieve.ts`가 `hasKey()`로 선택).
-**실 임베딩 경로(0.30/0.20)는 A의 실데이터+실키 도착 후** in-corpus / out-of-corpus 질문 픽스처로
-재튜닝한다: in-corpus 최저 `best`보다 살짝 아래, out-of-corpus 최고 `best`보다 위.
+### 왜 2단인가 (실측 근거)
+`npm run calibrate` 로 실데이터(369건) + in/out 각 10문항 픽스처를 측정한 결과:
+
+```
+in-corpus : min 0.3847,  mean 0.4305
+out-corpus: max 0.3872,  mean 0.3367     → 분리 마진 -0.0025 (겹침!)
+```
+
+종합 뉴스 코퍼스는 **어떤 질문이든 기저 유사도가 높아** 단일 코사인 임계치로는 범위 밖을 못 가른다.
+그래서:
+
+1. **1단 (싸다) — 코사인 `TAU_MIN=0.36`**: in-corpus는 전부 통과시키면서 명백한 junk(김치찌개·미분공식 등)
+   **60%를 챗 호출 0회로** 차단. 비용 가드.
+2. **2단 (정확하다) — 인용 게이트**: 1단을 통과했어도 **LLM이 근거를 하나도 인용하지 못하면**
+   최종 판정을 `no_result`로 뒤집는다. 인용 없는 답변은 검증 불가하므로 내보내지 않는다.
+
+→ 실측: 범위 밖 10문항 전부 `no_result`, in-corpus 10문항 전부 정상 인용 답변.
+
+해시 폴백은 코사인 절대 스케일이 달라 임계치를 분리했다(`retrieve.ts`가 코퍼스 provenance로 선택).
+코퍼스가 바뀌면 `npm run calibrate` 로 재측정해 `TAU_MIN`을 다시 잡는다.
 
 ---
 
@@ -139,6 +156,9 @@ npm run smoke:retrieve
 
 # 3) 타입·린트·단위테스트
 npm run typecheck && npm run lint && npm test
+
+# 3-1) 임계치 캘리브레이션 (실 임베딩 코퍼스 + 실 키 필요)
+npm run calibrate       # in/out fixture의 최고 유사도 분포 → 권장 TAU_MIN 산출
 
 # 4) 로컬 서버 + 엔드포인트
 npm run dev
@@ -187,12 +207,21 @@ curl -sN -X POST "localhost:3000/api/ask?stream=1" \
 `Content-Type: text/event-stream`. 각 이벤트는 `data: <json>\n\n` 한 줄, JSON의 `type`으로 구분(D는 `type`별 처리):
 
 ```
-data: {"type":"meta","no_result":false}          // 최초 1회
-data: {"type":"token","text":"반도체 수출이…"}    // 답변 델타(여러 번)
-data: {"type":"sources","source_ids":["a0013"]}   // 인용된 근거(토큰 종료 후 1회)
-data: {"type":"done"}                             // 항상 마지막
-// 스트리밍 중 오류: {"type":"error","error":"…"} 후 done (상태코드는 200 고정)
+data: {"type":"meta","no_result":false}            // ① 잠정 판정 (1단 게이트=코사인 검색)
+data: {"type":"token","text":"반도체 수출이…"}      // 답변 델타(여러 번)
+data: {"type":"sources","source_ids":["a0013"]}    // 인용된 근거 id
+data: {"type":"meta","no_result":false}            // ② 최종 판정 (2단 게이트=인용 여부)
+data: {"type":"done"}                              // 항상 마지막
+// 스트리밍 중 오류: {"type":"error","code":"rate_limit"|"error","error":"…"} 후 done (상태코드 200 고정)
 ```
+
+⚠️ **`meta`는 2번 오고, 마지막 `meta`가 최종 판정**이다.
+스트리밍은 첫 토큰이 나가기 전에 최종 판정을 알 수 없으므로(인용은 생성 중에 나온다),
+① 시작 시 잠정 판정 → ② 종료 시 최종 판정 순으로 보낸다.
+최종 `no_result:true`면 프론트는 **스트리밍된 본문을 버리고 "관련 기사 없음" 안내문**을 표시한다.
+
+> 관심사 분리: **`meta` = 판정**, **`sources` = 인용 목록**.
+> 클라이언트는 meta를 받을 때마다 판정을 갱신(덮어쓰기)하면 된다.
 
 임계치 게이트·검색 오류는 **스트리밍 시작 전**에 처리되므로 `no_result`/`429`/`500`은 정상 동작한다.
 기본(비스트리밍) JSON 계약은 그대로 유지 — 스트리밍은 순수 추가 기능.

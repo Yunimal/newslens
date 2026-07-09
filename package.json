@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/test/similarity.test.ts",
     "gen:mock": "tsx scripts/generate-mock-data.ts",
-    "smoke:retrieve": "tsx scripts/smoke-retrieve.ts"
+    "smoke:retrieve": "tsx scripts/smoke-retrieve.ts",
+    "calibrate": "tsx scripts/calibrate-threshold.ts"
   },
   "dependencies": {
     "next": "16.2.10",
