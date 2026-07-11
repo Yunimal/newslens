@@ -2,7 +2,7 @@
 
 // 인물·기관 관계망 개발/테스트용 페이지. /map, /trends와 동일한 목적.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useGraph } from "../lib/useGraph";
 import { useArticles } from "../lib/useArticles";
 import { EntityGraph, TYPE_COLOR, TYPE_LABEL } from "../components/EntityGraph";
@@ -22,9 +22,10 @@ export default function GraphDevPage() {
 
   // 노드를 바꿔서 선택할 때마다 "더보기"로 늘려놨던 개수를 초기값으로 되돌린다 —
   // 이전 엔티티에서 40건까지 펼쳐봤다고 다음 엔티티도 40건부터 시작하면 안 된다.
-  useEffect(() => {
+  const handleSelectNode = (nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
     setVisibleCount(RELATED_ARTICLE_PAGE);
-  }, [selectedNodeId]);
+  };
 
   const relatedArticles = useMemo(() => {
     if (!selectedNode) return [];
@@ -79,7 +80,7 @@ export default function GraphDevPage() {
               nodes={nodes}
               edges={edges}
               selectedNodeId={selectedNodeId}
-              onSelectNode={setSelectedNodeId}
+              onSelectNode={handleSelectNode}
             />
           </div>
         )}
@@ -102,7 +103,7 @@ export default function GraphDevPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedNodeId(null)}
+                onClick={() => handleSelectNode(null)}
                 aria-label="선택 해제"
                 className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-sm text-slate-400 transition hover:border-white/20 hover:text-white"
               >
@@ -120,7 +121,7 @@ export default function GraphDevPage() {
                       <button
                         key={c.id}
                         type="button"
-                        onClick={() => setSelectedNodeId(c.id)}
+                        onClick={() => handleSelectNode(c.id)}
                         className="rounded-full border px-2.5 py-1 text-xs font-medium transition hover:brightness-110"
                         style={
                           color
