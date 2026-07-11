@@ -13,9 +13,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import type { Article, Cluster } from "@/types/schema";
 import { clusterColor } from "../lib/clusterColors";
+import { computeClusterStats } from "../lib/clusterStats";
 
 // 임시값 — 실데이터 렌더링 후 점 겹침 정도를 보면서 조정한다.
 export const HEATMAP_ZOOM_THRESHOLD = 2.5;
+// 이 배율을 넘어가면(그래도 아직 scatter 모드 전인 구간) 말풍선 라벨은 화면을 가리지
+// 않도록 먼저 감춘다 — 이 정도로 확대했으면 이미 원 자체가 커서 라벨 없이도 위치를
+// 알아보기 쉽고, 라벨이 화면을 가릴 정도로 커 보이기 시작한다.
+const LABEL_VISIBLE_ZOOM_THRESHOLD = 2.0;
 
 const VIEW_W = 1000;
 const VIEW_H = 700;
@@ -34,10 +39,35 @@ const DOT_ALPHA = 0.7;
 const DOT_CORE_R = 3.6;
 const DOT_CORE_ALPHA = 0.5;
 
+// 말풍선 라벨 — 히트맵 모드에서 어느 덩어리가 무슨 주제인지 늘 보이도록, 각 덩어리의
+// centroid에서 "지도 중심 반대 방향"으로 일정 거리 밀어낸 위치에 라벨 칩을 놓고
+// centroid까지 꼬리(삼각형)+점선으로 잇는다.
+//
+// 라벨은 pan/zoom이 걸린 <g transform="scale(k)...">의 바깥, 별도의 스크린 좌표계
+// <g>에 그린다(캔버스가 transform.apply()로 화면 좌표를 직접 계산하는 것과 동일한
+// 방식). 처음엔 라벨을 데이터 좌표계 안에 두고 오프셋만 1/k로 보정했었는데, centroid가
+// 캔버스 경계 근처라 clamp가 걸리는 클러스터는 clamp된 "데이터 좌표 간격" 자체가
+// 다시 줌에 비례해 줄어들어 축소하면 또 겹쳐버렸다. 화면 좌표계로 완전히 빼면
+// 오프셋·여백·clamp 전부 줌과 무관한 고정 픽셀값이 되어 이 문제가 근본적으로 없어진다.
+const LABEL_OFFSET = 150;
+const LABEL_FONT_SIZE = 15;
+const LABEL_CHAR_WIDTH_EM = 0.85;
+const LABEL_PAD_X = 10;
+const LABEL_PAD_Y = 8;
+const LABEL_TAIL_LEN = 12;
+const LABEL_TAIL_HALF_W = 7;
+const LABEL_MAX_CHARS = 20;
+
 type Mode = "heatmap" | "scatter";
+
+function truncateLabel(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return text.slice(0, Math.max(0, maxChars - 1)) + "…";
+}
 
 export function ClusterMap({
   articles,
+  allArticles,
   clusters,
   selectedClusterId = null,
   selectedArticleId = null,
@@ -45,6 +75,10 @@ export function ClusterMap({
   onSelectArticle,
 }: {
   articles: Article[];
+  // 지도 좌표계(xScale/yScale)의 기준 — 날짜 등으로 articles를 필터링해도 지도 자체는
+  // 흔들리지 않도록, 필터링 전 전체 기사 목록을 넘기면 그걸로 domain을 고정한다.
+  // 안 넘기면 articles로 계산(기존 동작과 동일).
+  allArticles?: Article[];
   clusters: Cluster[];
   selectedClusterId?: number | null;
   selectedArticleId?: string | null;
@@ -57,10 +91,16 @@ export function ClusterMap({
   const [hoveredCluster, setHoveredCluster] = useState<number | null>(null);
   const [hoveredArticle, setHoveredArticle] = useState<string | null>(null);
 
-  // 데이터 좌표(UMAP x,y) → 뷰박스 픽셀 좌표. articles 가 바뀌지 않는 한 재계산 불필요.
+  // cluster.size/sentiment_dist는 전체 기간 합산치라, 날짜 등으로 필터링된 articles가
+  // 들어와도 그대로 쓰면 숫자가 안 맞는다 — 실제로 렌더 중인 articles 기준으로 다시 센다.
+  const statsByCluster = useMemo(() => computeClusterStats(articles), [articles]);
+
+  // 데이터 좌표(UMAP x,y) → 뷰박스 픽셀 좌표. domain은 필터링 전 전체 기사 기준으로 고정해서,
+  // 날짜를 바꿔도 지도 자체(축척)는 그대로고 그 위에 찍히는 점만 바뀌게 한다.
   const { xScale, yScale } = useMemo(() => {
-    const xs = articles.map((a) => a.x);
-    const ys = articles.map((a) => a.y);
+    const domainSource = allArticles ?? articles;
+    const xs = domainSource.map((a) => a.x);
+    const ys = domainSource.map((a) => a.y);
     const x = d3
       .scaleLinear()
       .domain([Math.min(...xs), Math.max(...xs)])
@@ -71,15 +111,21 @@ export function ClusterMap({
       .domain([Math.min(...ys), Math.max(...ys)])
       .range([VIEW_H - PADDING, PADDING]);
     return { xScale: x, yScale: y };
-  }, [articles]);
+  }, [allArticles, articles]);
+
+  // 화면에 실제로 보여줄 클러스터 — 선택된 날짜에 기사가 0건이면 덩어리도, 말풍선도 안 그린다.
+  const visibleClusters = useMemo(
+    () => clusters.filter((c) => (statsByCluster.get(c.id)?.size ?? 0) > 0),
+    [clusters, statsByCluster],
+  );
 
   // 면적이 실제 기사 수에 비례하도록 domain을 0부터 잡는다(scaleSqrt: 반지름이 아니라
   // 면적을 값에 비례시킴). min~max로 domain을 잡으면 작은 클러스터가 실제보다 훨씬
   // 작아 보여 개수 차이를 왜곡한다 — 정직한 크기 비교가 우선이라 여기선 과장하지 않는다.
   const hitTargetRadius = useMemo(() => {
-    const maxSize = Math.max(...clusters.map((c) => c.size), 1);
+    const maxSize = Math.max(...visibleClusters.map((c) => statsByCluster.get(c.id)?.size ?? 0), 1);
     return d3.scaleSqrt().domain([0, maxSize]).range([HIT_TARGET_MIN_R, HIT_TARGET_MAX_R]).clamp(true);
-  }, [clusters]);
+  }, [visibleClusters, statsByCluster]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -156,14 +202,15 @@ export function ClusterMap({
       >
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
           {mode === "heatmap"
-            ? clusters.map((c) => {
+            ? visibleClusters.map((c) => {
                 const isActive = hoveredCluster === c.id || selectedClusterId === c.id;
+                const size = statsByCluster.get(c.id)?.size ?? 0;
                 return (
                   <circle
                     key={c.id}
                     cx={xScale(c.centroid.x)}
                     cy={yScale(c.centroid.y)}
-                    r={hitTargetRadius(c.size)}
+                    r={hitTargetRadius(size)}
                     fill={clusterColor(c.id)}
                     fillOpacity={isActive ? 0.12 : 0.02}
                     stroke={isActive ? "white" : "none"}
@@ -174,7 +221,7 @@ export function ClusterMap({
                     onClick={() => onSelectCluster(c.id)}
                     className="cursor-pointer"
                   >
-                    <title>{`${c.label} (${c.size}건)`}</title>
+                    <title>{`${c.label} (${size}건)`}</title>
                   </circle>
                 );
               })
@@ -200,6 +247,95 @@ export function ClusterMap({
                 );
               })}
         </g>
+
+        {/* 말풍선 라벨 — pan/zoom이 걸린 <g> 밖, 화면 좌표계에 직접 그린다(위 주석 참고).
+            centroid의 실제 화면 위치는 캔버스와 동일하게 transform.apply()로 구한다.
+            LABEL_VISIBLE_ZOOM_THRESHOLD를 넘게 확대하면(아직 scatter 전환 전이라도)
+            원이 이미 커서 라벨 없이도 알아보기 쉬우니, 화면을 가리지 않게 먼저 뺀다. */}
+        {mode === "heatmap" && transform.k <= LABEL_VISIBLE_ZOOM_THRESHOLD && (
+          <g>
+            {visibleClusters.map((c) => {
+              const isActive = hoveredCluster === c.id || selectedClusterId === c.id;
+              const [ccx, ccy] = transform.apply([xScale(c.centroid.x), yScale(c.centroid.y)]);
+              const mapCx = VIEW_W / 2;
+              const mapCy = VIEW_H / 2;
+              // centroid가 지도 중심에서 뻗어나간 방향 그대로, 화면상 LABEL_OFFSET
+              // 픽셀만큼 더 밀어낸다.
+              const angle = Math.atan2(ccy - mapCy, ccx - mapCx);
+              const text = truncateLabel(c.label, LABEL_MAX_CHARS);
+              const textW = text.length * LABEL_FONT_SIZE * LABEL_CHAR_WIDTH_EM;
+              const rectHalfW = textW / 2 + LABEL_PAD_X;
+              const rectHalfH = LABEL_FONT_SIZE / 2 + LABEL_PAD_Y;
+              // 화면 좌표계라 clamp도 뷰박스 전체([0,VIEW_W]x[0,VIEW_H])를 그대로 쓸 수
+              // 있다 — data padding에 안 묶이니 centroid가 가장자리에 있어도 밀어낼
+              // 여유 공간이 항상 확보된다.
+              const lx = Math.min(VIEW_W - rectHalfW - 4, Math.max(rectHalfW + 4, ccx + Math.cos(angle) * LABEL_OFFSET));
+              const ly = Math.min(VIEW_H - rectHalfH - 4, Math.max(rectHalfH + 4, ccy + Math.sin(angle) * LABEL_OFFSET));
+
+              const dx = ccx - lx;
+              const dy = ccy - ly;
+              const len = Math.hypot(dx, dy) || 1;
+              const ux = dx / len;
+              const uy = dy / len;
+              // 라벨 중심에서 (ux,uy) 방향으로 쏜 광선이 사각형 테두리와 만나는 지점 —
+              // 그 지점에서 꼬리 삼각형을 시작해야 말풍선처럼 자연스럽게 이어붙는다.
+              const t = 1 / Math.max(Math.abs(ux) / rectHalfW, Math.abs(uy) / rectHalfH, 1e-6);
+              const edgeX = lx + ux * t;
+              const edgeY = ly + uy * t;
+              const tipX = lx + ux * (t + LABEL_TAIL_LEN);
+              const tipY = ly + uy * (t + LABEL_TAIL_LEN);
+              const perpX = -uy * LABEL_TAIL_HALF_W;
+              const perpY = ux * LABEL_TAIL_HALF_W;
+
+              return (
+                <g
+                  key={`label-${c.id}`}
+                  style={{ pointerEvents: "all", cursor: "pointer" }}
+                  onMouseEnter={() => setHoveredCluster(c.id)}
+                  onMouseLeave={() => setHoveredCluster((v) => (v === c.id ? null : v))}
+                  onClick={() => onSelectCluster(c.id)}
+                >
+                  <line
+                    x1={tipX}
+                    y1={tipY}
+                    x2={ccx}
+                    y2={ccy}
+                    stroke={clusterColor(c.id)}
+                    strokeOpacity={isActive ? 0.85 : 0.4}
+                    strokeWidth={isActive ? 1.8 : 1.2}
+                    strokeDasharray="3,3"
+                  />
+                  <polygon
+                    points={`${edgeX - perpX},${edgeY - perpY} ${edgeX + perpX},${edgeY + perpY} ${tipX},${tipY}`}
+                    fill={clusterColor(c.id)}
+                  />
+                  <rect
+                    x={lx - rectHalfW}
+                    y={ly - rectHalfH}
+                    width={rectHalfW * 2}
+                    height={rectHalfH * 2}
+                    rx={8}
+                    fill={clusterColor(c.id)}
+                    stroke={isActive ? "white" : "none"}
+                    strokeWidth={2}
+                  />
+                  <text
+                    x={lx}
+                    y={ly}
+                    fontSize={LABEL_FONT_SIZE}
+                    fontWeight={700}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill="#f8fafc"
+                    style={{ userSelect: "none" }}
+                  >
+                    {text}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        )}
       </svg>
 
       {/* threshold 튜닝용 디버그 표시 — 확정되면 제거 */}
