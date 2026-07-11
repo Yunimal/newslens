@@ -5,7 +5,7 @@
 // 서버 전용 embeddings 는 여기에 들어오지 않는다(라우트가 ArticlesFile 만 반환).
 
 import { useEffect, useState } from "react";
-import type { Article, ArticlesFile, Cluster } from "@/types/schema";
+import type { Article, ArticlesFile, Cluster, Trend } from "@/types/schema";
 
 let cache: Promise<ArticlesFile> | null = null;
 
@@ -28,6 +28,7 @@ function loadArticles(): Promise<ArticlesFile> {
 export interface ArticleIndex {
   byId: Map<string, Article>;
   clusters: Cluster[];
+  trends: Trend[];
   loading: boolean;
   error: string | null;
 }
@@ -36,6 +37,7 @@ export function useArticles(): ArticleIndex {
   const [state, setState] = useState<ArticleIndex>({
     byId: new Map(),
     clusters: [],
+    trends: [],
     loading: true,
     error: null,
   });
@@ -48,6 +50,7 @@ export function useArticles(): ArticleIndex {
         setState({
           byId: new Map(file.articles.map((a) => [a.id, a])),
           clusters: file.clusters,
+          trends: file.trends,
           loading: false,
           error: null,
         });
