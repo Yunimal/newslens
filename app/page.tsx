@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { AskRequest, ChatTurn, Cluster } from "@/types/schema";
 import { useArticles } from "./lib/useArticles";
 import { AssistantMessage } from "./components/AssistantMessage";
@@ -181,6 +182,12 @@ export default function Home() {
           NewsLens
         </span>
         <p className="text-sm text-slate-400">뉴스 근거를 붙여 답하는 리서처</p>
+        <Link
+          href="/dashboard"
+          className="ml-auto rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-slate-200 transition hover:border-cyan-300/50 hover:bg-cyan-300/10"
+        >
+          📊 대시보드
+        </Link>
       </header>
 
       <div className="flex-1 space-y-6 py-6">

@@ -61,3 +61,9 @@ __pycache__/
 
 # 가상환경 폴더 제외
 NLP_project/
+
+# 파이프라인 재실행 전 백업 (커밋 금지)
+data/backup_*/
+
+# Python 가상환경 (커밋 금지)
+.venv/
