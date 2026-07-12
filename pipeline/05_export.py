@@ -82,24 +82,13 @@ def export_articles():
         print("Error: No articles loaded from input file.")
         sys.exit(1)
 
-    print(f"Loaded {len(raw_articles)} articles. Preparing KMeans clustering...")
-    coords = [[art["x"], art["y"]] for art in raw_articles]
-    
-    try:
-        from sklearn.cluster import KMeans
-        import numpy as np
-        kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
-        cluster_labels = kmeans.fit_predict(np.array(coords)).tolist()
-    except Exception as e:
-        print(f"[경고] scikit-learn 실행 중 에러 발생, 수동 군집화로 우회합니다. Error: {e}")
-        cluster_labels = []
-        for c in coords:
-            x_idx = 0 if c[0] < 5.0 else (1 if c[0] < 7.0 else 2)
-            y_idx = 0 if c[1] < 5.5 else 1
-            cluster_labels.append(x_idx + y_idx * 3)
+    print(f"Loaded {len(raw_articles)} articles. Using pre-computed high-dimensional cluster IDs...")
+    for art in raw_articles:
+        if "cluster_id" not in art:
+            print(f"[치명적 오류] 기사 ID '{art.get('id')}'에 필수 값인 'cluster_id'가 누락되었습니다. 파이프라인을 중단합니다.", file=sys.stderr)
+            sys.exit(1)
 
-    for art, c_id in zip(raw_articles, cluster_labels):
-        art["cluster_id"] = c_id
+
 
     id_mappings = load_id_mappings()
     max_idx = 0

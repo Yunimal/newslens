@@ -110,22 +110,37 @@ def main():
             coords = random_projection_2d(vectors)
             method_used = "Mathematical Random Projection (Fallback)"
 
-    # X, Y 좌표를 기사 데이터 객체에 병합
+    # 512차원 고차원 벡터 기준 KMeans 군집화 수행
+    cluster_labels = []
+    try:
+        from sklearn.cluster import KMeans
+        import numpy as np
+        print("[정보] 512차원 고차원 임베딩 기준 KMeans 군집화를 실행합니다...")
+        kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(np.array(vectors)).tolist()
+    except Exception as e:
+        print(f"[치명적 오류] 고차원 군집화(KMeans) 수행 실패: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+    # X, Y 좌표 및 cluster_id를 기사 데이터 객체에 병합
     output_articles = []
-    for art, (x, y) in zip(valid_articles, coords):
+    for art, (x, y), c_id in zip(valid_articles, coords, cluster_labels):
         # 원본 복사
         art_copy = dict(art)
         art_copy["x"] = x
         art_copy["y"] = y
+        art_copy["cluster_id"] = c_id
         output_articles.append(art_copy)
 
     # 파일 저장
     with open(OUTPUT_ARTICLES, 'w', encoding='utf-8') as f:
         json.dump(output_articles, f, ensure_ascii=False, indent=2)
 
-    print(f"\n=== 차원 축소 완료 ===")
-    print(f"적용된 알고리즘: {method_used}")
+    print(f"\n=== 차원 축소 및 군집화 완료 ===")
+    print(f"적용된 알고리즘: {method_used} + High-Dim KMeans")
     print(f"최종 결과 저장: '{OUTPUT_ARTICLES}' (총 {len(output_articles)}건)")
 
 if __name__ == "__main__":
     main()
+
