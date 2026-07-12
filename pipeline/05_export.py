@@ -85,8 +85,9 @@ def export_articles():
     print(f"Loaded {len(raw_articles)} articles. Using pre-computed high-dimensional cluster IDs...")
     for art in raw_articles:
         if "cluster_id" not in art:
-            # 혹시 모를 누락 대비 폴백
-            art["cluster_id"] = 0
+            print(f"[치명적 오류] 기사 ID '{art.get('id')}'에 필수 값인 'cluster_id'가 누락되었습니다. 파이프라인을 중단합니다.", file=sys.stderr)
+            sys.exit(1)
+
 
 
     id_mappings = load_id_mappings()

@@ -119,8 +119,9 @@ def main():
         kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
         cluster_labels = kmeans.fit_predict(np.array(vectors)).tolist()
     except Exception as e:
-        print(f"[경고] 고차원 군집화 중 에러가 발생하여 단순 라운드로빈(i % 6)으로 우회합니다. Error: {e}")
-        cluster_labels = [i % 6 for i in range(len(vectors))]
+        print(f"[치명적 오류] 고차원 군집화(KMeans) 수행 실패: {e}", file=sys.stderr)
+        sys.exit(1)
+
 
     # X, Y 좌표 및 cluster_id를 기사 데이터 객체에 병합
     output_articles = []
